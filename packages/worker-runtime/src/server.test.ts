@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AddressInfo } from "node:net";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
@@ -205,6 +205,7 @@ describe("POST /dispatch", () => {
   it("streams error event on query failure", async () => {
     mockQuery.mockReturnValue(
       (async function* () {
+        yield { type: "system", subtype: "init" };
         throw new Error("SDK exploded");
       })() as unknown as ReturnType<typeof query>,
     );

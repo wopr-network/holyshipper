@@ -46,10 +46,4 @@ export interface ErrorEvent {
   message: string;
 }
 
-export type NukeEvent =
-  | SessionEvent
-  | SystemEvent
-  | ToolUseEvent
-  | TextEvent
-  | ResultEvent
-  | ErrorEvent;
+export type NukeEvent = SessionEvent | SystemEvent | ToolUseEvent | TextEvent | ResultEvent | ErrorEvent;

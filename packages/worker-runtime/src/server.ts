@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { parseSignal } from "./parse-signal.js";
-import type { NukeEvent, DispatchRequest } from "./types.js";
+import type { DispatchRequest, NukeEvent } from "./types.js";
 
 const MODEL_MAP: Record<DispatchRequest["modelTier"], string> = {
   opus: "claude-opus-4-6",
@@ -19,8 +19,8 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("data", (chunk: Buffer) => {
       totalSize += chunk.length;
       if (totalSize > MAX_BODY_SIZE) {
+        req.resume();
         reject(new Error("Request body too large"));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
@@ -40,6 +40,7 @@ async function handleDispatch(req: IncomingMessage, res: ServerResponse): Promis
     body = await readBody(req);
   } catch {
     res.writeHead(400).end("Bad request");
+    res.on("finish", () => req.destroy());
     return;
   }
 
@@ -85,7 +86,13 @@ async function handleDispatch(req: IncomingMessage, res: ServerResponse): Promis
           "linear-server": {
             type: "stdio" as const,
             command: "npx",
-            args: ["-y", "mcp-remote", "https://mcp.linear.app/mcp", "--header", `Authorization: Bearer ${linearApiKey}`],
+            args: [
+              "-y",
+              "mcp-remote",
+              "https://mcp.linear.app/mcp",
+              "--header",
+              `Authorization: Bearer ${linearApiKey}`,
+            ],
             env,
           },
         }
@@ -99,6 +106,7 @@ async function handleDispatch(req: IncomingMessage, res: ServerResponse): Promis
         ...(sessionId ? { resume: sessionId } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         env,
+        /* v8 ignore next */
         stderr: (line: string) => process.stderr.write(`[sdk] ${line}\n`),
       },
     })) {
