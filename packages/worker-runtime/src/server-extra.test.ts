@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AddressInfo } from "node:net";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
@@ -92,6 +92,16 @@ describe("POST /dispatch — request validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "not json {{{",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when body exceeds 1MB", async () => {
+    const bigBody = "x".repeat(1024 * 1024 + 1);
+    const res = await fetch(`${url}/dispatch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: bigBody,
     });
     expect(res.status).toBe(400);
   });
@@ -205,5 +215,37 @@ describe("POST /dispatch — Linear MCP", () => {
     expect(callOpts.mcpServers).toBeUndefined();
 
     process.env.LINEAR_API_KEY = original;
+  });
+});
+
+describe("POST /dispatch — unknown message types are silently ignored", () => {
+  it("ignores unknown top-level message type", async () => {
+    mockQuery.mockReturnValue(makeStream([{ type: "unknown_future_type" }, SUCCESS]) as ReturnType<typeof query>);
+
+    const res = await fetch(`${url}/dispatch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "work", modelTier: "haiku" }),
+    });
+
+    const events = await parseSSE(res);
+    expect(events.some((e) => (e as { type: string }).type === "result")).toBe(true);
+  });
+
+  it("ignores unknown content block type within assistant message", async () => {
+    const assistantWithUnknownBlock = {
+      type: "assistant",
+      message: { content: [{ type: "thinking", thinking: "hmm" }] },
+    };
+    mockQuery.mockReturnValue(makeStream([assistantWithUnknownBlock, SUCCESS]) as ReturnType<typeof query>);
+
+    const res = await fetch(`${url}/dispatch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "work", modelTier: "haiku" }),
+    });
+
+    const events = await parseSSE(res);
+    expect(events.some((e) => (e as { type: string }).type === "result")).toBe(true);
   });
 });

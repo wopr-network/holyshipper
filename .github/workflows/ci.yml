@@ -1,5 +1,9 @@
 name: CI
 
+permissions:
+  contents: read
+  pull-requests: write
+
 on:
   push:
     branches: [main]
@@ -9,30 +13,56 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  lint:
+    name: Lint and Type Check
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: packages/worker-runtime/package-lock.json
+          node-version: "24.x"
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm install
-        working-directory: packages/worker-runtime
+        run: pnpm install --frozen-lockfile
+
+      - name: Biome lint
+        run: pnpm run lint
 
       - name: Type check
-        run: npx tsc --noEmit
-        working-directory: packages/worker-runtime
+        run: pnpm run check
 
-      - name: Test
-        run: npx vitest run
-        working-directory: packages/worker-runtime
+  test:
+    name: Test
+    runs-on: [self-hosted, Linux, X64]
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test with coverage
+        run: pnpm run test
+
+      - name: Post coverage to PR
+        if: github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@2500dafcee7dd64f85ab689c0b83798a8359770e # v2
+        with:
+          json-summary-path: packages/worker-runtime/coverage/coverage-summary.json
 
   publish:
+    name: Publish (${{ matrix.worker }})
     runs-on: [self-hosted, Linux, X64]
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

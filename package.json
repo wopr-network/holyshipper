@@ -1,15 +1,19 @@
 {
   "name": "@wopr-network/nuke",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
+  "packageManager": "pnpm@10.31.0",
   "scripts": {
-    "build": "npm run build -w packages/worker-runtime",
-    "test": "npm run test -w packages/worker-runtime",
-    "check": "npm run check -w packages/worker-runtime"
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "check": "pnpm -r run check",
+    "lint": "biome check --error-on-warnings packages/worker-runtime/src/",
+    "format": "biome format --write packages/worker-runtime/src/"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
   }
 }
