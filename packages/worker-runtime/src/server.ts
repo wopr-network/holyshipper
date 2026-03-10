@@ -415,16 +415,14 @@ async function handleCheckout(req: IncomingMessage, res: ServerResponse): Promis
 
     // Return worktrees map. For single-repo backwards compat, also include flat fields.
     const firstRepoName = repoList[0].split("/").pop() ?? repoList[0];
-    res
-      .writeHead(200, { "Content-Type": "application/json" })
-      .end(
-        JSON.stringify({
-          worktrees,
-          worktreePath: worktrees[firstRepoName],
-          codebasePath: worktrees[firstRepoName],
-          branch: targetBranch,
-        }),
-      );
+    res.writeHead(200, { "Content-Type": "application/json" }).end(
+      JSON.stringify({
+        worktrees,
+        worktreePath: worktrees[firstRepoName],
+        codebasePath: worktrees[firstRepoName],
+        branch: targetBranch,
+      }),
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error(`[checkout] failed`, {
