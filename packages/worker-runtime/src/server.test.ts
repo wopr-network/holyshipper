@@ -1,7 +1,22 @@
+import { execFile } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const execFileAsync = promisify(execFile);
+
+// Redirect homedir() to a temp directory so tests never touch real credentials
+const fakeHome = mkdtempSync(join(tmpdir(), "nuke-test-"));
+vi.mock("node:os", async () => {
+  const actual = await vi.importActual<typeof import("node:os")>("node:os");
+  return { ...actual, homedir: () => fakeHome };
+});
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
@@ -219,6 +234,449 @@ describe("POST /dispatch", () => {
     const events = await parseSSE(res);
     const error = events.find((e) => (e as { type: string }).type === "error") as { type: string; message: string };
     expect(error?.message).toContain("SDK exploded");
+  });
+});
+
+describe("POST /credentials", () => {
+  it("writes claude credentials to ~/.claude/.credentials.json", async () => {
+    const creds = { oauthToken: "test-token-123", expiresAt: "2026-12-31" };
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ claude: creds }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, boolean>;
+    expect(body.claude).toBe(true);
+
+    const written = await readFile(join(fakeHome, ".claude", ".credentials.json"), "utf-8");
+    expect(JSON.parse(written)).toEqual(creds);
+  });
+
+  it("sets GH_TOKEN env var from github credentials", async () => {
+    const originalGh = process.env.GH_TOKEN;
+    const originalGithub = process.env.GITHUB_TOKEN;
+
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ github: { token: "ghp_test123" } }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, boolean>;
+    expect(body.github).toBe(true);
+    expect(process.env.GH_TOKEN).toBe("ghp_test123");
+    expect(process.env.GITHUB_TOKEN).toBe("ghp_test123");
+
+    // Restore
+    process.env.GH_TOKEN = originalGh;
+    process.env.GITHUB_TOKEN = originalGithub;
+  });
+
+  it("accepts both claude and github in one call", async () => {
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        claude: { oauthToken: "tok" },
+        github: { token: "ghp_both" },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, boolean>;
+    expect(body.claude).toBe(true);
+    expect(body.github).toBe(true);
+  });
+
+  it("returns 200 but skips token when github object has no token field", async () => {
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ claude: { oauth_token: "x", refresh_token: "y" }, github: {} }),
+    });
+    // claude cred is recognized, so not a 400
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, boolean>;
+    expect(body.github).toBeUndefined();
+  });
+
+  it("returns 400 for no recognized credential types", async () => {
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unknown: "stuff" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for oversized body", async () => {
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "x".repeat(1024 * 1024 + 1),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for invalid JSON", async () => {
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "not json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for non-object JSON", async () => {
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify([1, 2, 3]),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /checkout", () => {
+  it("returns 400 for missing repo", async () => {
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branch: "wop-123" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for invalid JSON", async () => {
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "not json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 500 when workspace is not writable (default /workspace path)", async () => {
+    // No NUKE_WORKSPACE set — falls back to /workspace which is not writable in test env
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: "nonexistent/repo-that-will-fail", branch: "test-branch" }),
+    });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBeDefined();
+  });
+
+  it("returns 500 when gh clone fails for nonexistent remote repo", async () => {
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: "nonexistent/repo-that-will-fail", branch: "test-branch" }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBeDefined();
+  });
+
+  it("returns 400 for empty body", async () => {
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for oversized body", async () => {
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "x".repeat(1024 * 1024 + 1),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("clones without GH token when env vars absent", async () => {
+    const origGH = process.env.GH_TOKEN;
+    const origGithub = process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-notoken-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: bareDir }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+    process.env.GH_TOKEN = origGH;
+    process.env.GITHUB_TOKEN = origGithub;
+
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 400 when repo field is missing but other fields present", async () => {
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branch: "feat-x", other: "data" }),
+    });
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).toContain("repo");
+  });
+
+  it("clones a local repo and returns worktrees map", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-clone-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: bareDir, branch: "feat-test" }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { worktrees: Record<string, string>; worktreePath: string; branch: string };
+    expect(body.branch).toBe("feat-test");
+    expect(body.worktreePath).toBeDefined();
+    expect(typeof body.worktrees).toBe("object");
+  });
+
+  it("fetches when worktree already exists and checks out existing branch", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-fetch-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+    // Create the target branch in the remote
+    await execFileAsync("git", ["-C", workDir, "checkout", "-b", "existing-branch"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "existing-branch"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    // Pre-clone into the workspace so existsSync returns true
+    await execFileAsync("git", ["clone", bareDir, join(wsDir, "test-repo")]);
+
+    process.env.NUKE_WORKSPACE = wsDir;
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: bareDir, branch: "existing-branch" }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { branch: string };
+    expect(body.branch).toBe("existing-branch");
+  });
+
+  it("clones a ../relative-path repo", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-dotdot-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+
+    // Use a path starting with ../  — server should use git clone not gh
+    const nested = join(tmpDir, "nested");
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(nested, { recursive: true });
+    const origCwd = process.cwd();
+    process.chdir(nested);
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: "../test-repo" }),
+    });
+    process.chdir(origCwd);
+    delete process.env.NUKE_WORKSPACE;
+
+    expect(res.status).toBe(200);
+  });
+
+  it("clones a ./relative-path repo", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-rel-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+
+    // Use a relative path starting with ./ — server should use git clone not gh
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: "./test-repo" }),
+    });
+    process.chdir(origCwd);
+    delete process.env.NUKE_WORKSPACE;
+
+    expect(res.status).toBe(200);
+  });
+
+  it("reads GH token from file when env vars absent", async () => {
+    const origGH = process.env.GH_TOKEN;
+    const origGithub = process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+
+    // Write a fake token to a temp file and point the server at it
+    const tokenFile = join(mkdtempSync(join(tmpdir(), "nuke-tok-")), "gh-token");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(tokenFile, "fake-token-from-file");
+    process.env.GH_TOKEN_PATH_OVERRIDE = tokenFile;
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-tok-repo-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: bareDir }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+    delete process.env.GH_TOKEN_PATH_OVERRIDE;
+    process.env.GH_TOKEN = origGH;
+    process.env.GITHUB_TOKEN = origGithub;
+
+    expect(res.status).toBe(200);
+  });
+
+  it("clones with entityId and nests under entityId subdir", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-entity-"));
+    const bareDir = join(tmpDir, "test-repo");
+    const workDir = join(tmpDir, "work");
+
+    await execFileAsync("git", ["init", "--bare", bareDir]);
+    await execFileAsync("git", ["clone", bareDir, workDir]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+    await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+    await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+    await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: bareDir, entityId: "entity-123" }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { worktreePath: string };
+    expect(body.worktreePath).toContain("entity-123");
+  });
+
+  it("clones multiple local repos and returns worktrees map", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nuke-multi-"));
+
+    const makeRepo = async (name: string) => {
+      const bareDir = join(tmpDir, name);
+      const workDir = join(tmpDir, `${name}-work`);
+      await execFileAsync("git", ["init", "--bare", bareDir]);
+      await execFileAsync("git", ["clone", bareDir, workDir]);
+      await execFileAsync("git", ["-C", workDir, "config", "user.email", "test@test.com"]);
+      await execFileAsync("git", ["-C", workDir, "config", "user.name", "Test"]);
+      await execFileAsync("git", ["-C", workDir, "commit", "--allow-empty", "-m", "init"]);
+      await execFileAsync("git", ["-C", workDir, "push", "origin", "HEAD:main"]);
+      return bareDir;
+    };
+
+    const [repo1, repo2] = await Promise.all([makeRepo("repo-a"), makeRepo("repo-b")]);
+    const wsDir = mkdtempSync(join(tmpdir(), "nuke-ws-"));
+    process.env.NUKE_WORKSPACE = wsDir;
+
+    const res = await fetch(`${url}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repos: [repo1, repo2], branch: "feat-multi" }),
+    });
+    delete process.env.NUKE_WORKSPACE;
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { worktrees: Record<string, string>; branch: string };
+    expect(body.branch).toBe("feat-multi");
+    expect(Object.keys(body.worktrees).length).toBe(2);
+  });
+});
+
+describe("POST /credentials — github string shorthand", () => {
+  it("accepts github as bare string token", async () => {
+    const originalGh = process.env.GH_TOKEN;
+    const originalGithub = process.env.GITHUB_TOKEN;
+
+    const res = await fetch(`${url}/credentials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ github: "ghp_shorthand_token" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, boolean>;
+    expect(body.github).toBe(true);
+    expect(process.env.GH_TOKEN).toBe("ghp_shorthand_token");
+
+    process.env.GH_TOKEN = originalGh;
+    process.env.GITHUB_TOKEN = originalGithub;
   });
 });
 
