@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { evaluateGate, type GateRequest } from "./gates.js";
+import { evaluateGate, listHandlers, type GateRequest } from "./gates.js";
 import { logger } from "./logger.js";
 import { parseSignal } from "./parse-signal.js";
 import type { DispatchRequest, HolyshipperEvent } from "./types.js";
@@ -537,6 +537,11 @@ export function makeHandler(): RequestListener {
 
     if (method === "POST" && url === "/gate") {
       await handleGate(req, res);
+      return;
+    }
+
+    if (method === "GET" && url === "/gate/handlers") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ops: listHandlers() }));
       return;
     }
 
