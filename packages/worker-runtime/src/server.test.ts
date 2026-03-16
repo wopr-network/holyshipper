@@ -732,3 +732,124 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("POST /gate", () => {
+  it("returns 400 on body too large", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      body: "x".repeat(1024 * 1024 + 1),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 on invalid JSON", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      body: "not json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 on missing gateId", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entityId: "e-1", op: "vcs.ci_status" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing gateId");
+  });
+
+  it("returns 400 on missing entityId", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", op: "vcs.ci_status" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing entityId");
+  });
+
+  it("returns 400 on missing op", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", entityId: "e-1" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing op");
+  });
+
+  it("returns 400 on invalid params type", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", entityId: "e-1", op: "vcs.ci_status", params: "not-object" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid params");
+  });
+
+  it("returns error outcome for unregistered op", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", entityId: "e-1", op: "unknown.op", params: {} }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { outcome: string };
+    expect(body.outcome).toBe("error");
+  });
+
+  it("defaults params to empty object when omitted", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", entityId: "e-1", op: "unknown.op" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { outcome: string };
+    expect(body.outcome).toBe("error");
+  });
+
+  it("accepts timeoutMs parameter", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", entityId: "e-1", op: "unknown.op", params: {}, timeoutMs: 5000 }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { outcome: string };
+    expect(body.outcome).toBe("error");
+  });
+
+  it("returns 400 on params array", async () => {
+    const res = await fetch(`${url}/gate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gateId: "g-1", entityId: "e-1", op: "vcs.ci_status", params: [1, 2] }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /gate/handlers", () => {
+  it("returns list of registered ops", async () => {
+    const res = await fetch(`${url}/gate/handlers`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ops: string[] };
+    expect(Array.isArray(body.ops)).toBe(true);
+  });
+});
+
+describe("404 handler", () => {
+  it("returns 404 for unknown routes", async () => {
+    const res = await fetch(`${url}/nonexistent`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for wrong method", async () => {
+    const res = await fetch(`${url}/gate`, { method: "GET" });
+    expect(res.status).toBe(404);
+  });
+});

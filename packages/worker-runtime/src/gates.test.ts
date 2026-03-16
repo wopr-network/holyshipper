@@ -79,7 +79,7 @@ describe("evaluateGate", () => {
     expect(result.message).toContain("No handler registered");
   });
 
-  it("returns error outcome when handler throws", async () => {
+  it("returns error outcome when handler throws Error", async () => {
     registerHandler("vcs.ci_status", async () => {
       throw new Error("GitHub API rate limited");
     });
@@ -88,6 +88,17 @@ describe("evaluateGate", () => {
 
     expect(result.outcome).toBe("error");
     expect(result.message).toBe("GitHub API rate limited");
+  });
+
+  it("returns error outcome when handler throws non-Error", async () => {
+    registerHandler("vcs.ci_status", async () => {
+      throw "string error";
+    });
+
+    const result = await evaluateGate(baseRequest);
+
+    expect(result.outcome).toBe("error");
+    expect(result.message).toBe("string error");
   });
 
   it("returns timeout outcome when handler exceeds timeout", async () => {
