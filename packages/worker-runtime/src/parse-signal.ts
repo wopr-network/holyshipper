@@ -61,6 +61,32 @@ const SIGNAL_PATTERNS: SignalPattern[] = [
     signal: "cant_resolve",
     extractArtifacts: () => ({}),
   },
+  // engineering flow bare-word signals
+  {
+    pattern: /^spec_ready\r?$/,
+    signal: "spec_ready",
+    extractArtifacts: () => ({}),
+  },
+  {
+    pattern: /^ci_failed\r?$/,
+    signal: "ci_failed",
+    extractArtifacts: () => ({}),
+  },
+  {
+    pattern: /^learned\r?$/,
+    signal: "learned",
+    extractArtifacts: () => ({}),
+  },
+  {
+    pattern: /^blocked\r?$/,
+    signal: "blocked",
+    extractArtifacts: () => ({}),
+  },
+  {
+    pattern: /^closed\r?$/,
+    signal: "closed",
+    extractArtifacts: () => ({}),
+  },
   // wopr-changeset: documenting + learning bare-word signals
   {
     pattern: /^docs_ready\r?$/,
