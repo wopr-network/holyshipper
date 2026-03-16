@@ -173,9 +173,7 @@ describe("POST /dispatch — session ID handling", () => {
     // Should NOT create a new session
     expect(mockSessionCreate).not.toHaveBeenCalled();
     // Should prompt with the existing session ID
-    expect(mockSessionPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ path: { id: "existing-session" } }),
-    );
+    expect(mockSessionPrompt).toHaveBeenCalledWith(expect.objectContaining({ path: { id: "existing-session" } }));
 
     const events = await parseSSE(res);
     const session = events[0] as { type: string; sessionId: string };

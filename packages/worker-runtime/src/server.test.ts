@@ -155,9 +155,7 @@ describe("POST /dispatch", () => {
     // Should NOT create a new session
     expect(mockSessionCreate).not.toHaveBeenCalled();
     // Should prompt with the existing session ID
-    expect(mockSessionPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ path: { id: "existing-session-abc" } }),
-    );
+    expect(mockSessionPrompt).toHaveBeenCalledWith(expect.objectContaining({ path: { id: "existing-session-abc" } }));
   });
 
   it("starts fresh session when newSession=true even if sessionId provided", async () => {
