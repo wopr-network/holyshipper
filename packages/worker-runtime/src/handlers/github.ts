@@ -3,8 +3,8 @@
 // These run on the runner where GH_TOKEN and repo context are already available.
 // No GitHub App token resolution needed — credentials injection handles that.
 
-import { logger } from "../logger.js";
 import type { PrimitiveHandler } from "../gates.js";
+import { logger } from "../logger.js";
 
 function getToken(): string {
   const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
@@ -73,10 +73,10 @@ export const commentExists: PrimitiveHandler = async (_op, params, ctx) => {
     return { outcome: "error", message: "Missing required params: repo, issueNumber, pattern" };
   }
 
-  const res = await fetch(
-    `https://api.github.com/repos/${repo}/issues/${issueNumber}/comments?per_page=100`,
-    { headers: GITHUB_HEADERS(token), signal: ctx.signal },
-  );
+  const res = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}/comments?per_page=100`, {
+    headers: GITHUB_HEADERS(token),
+    signal: ctx.signal,
+  });
   if (!res.ok) return { outcome: "error", message: `GitHub API error: ${res.status}` };
 
   const comments = (await res.json()) as Array<{ body: string }>;

@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clearHandlers,
   evaluateGate,
+  type GateRequest,
   hasHandler,
   listHandlers,
   registerHandler,
   registerHandlers,
-  type GateRequest,
 } from "./gates.js";
 
 afterEach(() => {

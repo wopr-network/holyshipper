@@ -61,9 +61,7 @@ describe("vcs.ci_status", () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        check_runs: [
-          { status: "completed", conclusion: "failure" },
-        ],
+        check_runs: [{ status: "completed", conclusion: "failure" }],
       }),
     });
 
@@ -121,9 +119,7 @@ describe("issue_tracker.comment_exists", () => {
   it("returns exists when pattern matches", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => [
-        { body: "Some text\n## Implementation Spec\ndetails here" },
-      ],
+      json: async () => [{ body: "Some text\n## Implementation Spec\ndetails here" }],
     });
 
     const result = await commentExists(
@@ -176,12 +172,7 @@ describe("registerGitHubHandlers", () => {
   it("registers all 4 handlers", () => {
     const ops: string[] = [];
     registerGitHubHandlers((op) => ops.push(op));
-    expect(ops.sort()).toEqual([
-      "issue_tracker.comment_exists",
-      "vcs.ci_status",
-      "vcs.pr_capacity",
-      "vcs.pr_status",
-    ]);
+    expect(ops.sort()).toEqual(["issue_tracker.comment_exists", "vcs.ci_status", "vcs.pr_capacity", "vcs.pr_status"]);
   });
 });
 

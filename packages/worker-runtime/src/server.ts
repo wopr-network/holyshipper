@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { evaluateGate, listHandlers, type GateRequest } from "./gates.js";
+import { evaluateGate, type GateRequest, listHandlers } from "./gates.js";
 import { logger } from "./logger.js";
 import { parseSignal } from "./parse-signal.js";
 import type { DispatchRequest, HolyshipperEvent } from "./types.js";
